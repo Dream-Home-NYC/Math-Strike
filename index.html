@@ -1135,6 +1135,9 @@ function showScreen(id) {
    AUDIO (synth-based for zero-asset SFX)
    ================================================================ */
 let audioCtx = null;
+let bgmTimer = null;
+let bgmStep = 0;
+let bgmEnabled = false;
 
 function getAudio() {
   if (state.settings.sound !== 'on') return null;
@@ -1144,6 +1147,9 @@ function getAudio() {
     } catch (e) {
       return null;
     }
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
   }
   return audioCtx;
 }
@@ -1173,6 +1179,67 @@ const sfx = {
   fail:  () => { [400, 300, 200, 100].forEach((f, i) => setTimeout(()=>playTone(f, 0.3, 'sawtooth', 0.18), i*150)); },
   click: () => playTone(660, 0.04, 'sine', 0.06)
 };
+
+const BGM_PATTERN = [
+  { bass: 110, leadA: 440, leadB: 659.25 },
+  { bass: 110, leadA: 493.88, leadB: 659.25 },
+  { bass: 82.41, leadA: 523.25, leadB: 783.99 },
+  { bass: 98, leadA: 587.33, leadB: 739.99 },
+  { bass: 110, leadA: 659.25, leadB: 880 },
+  { bass: 82.41, leadA: 523.25, leadB: 783.99 },
+  { bass: 98, leadA: 587.33, leadB: 739.99 },
+  { bass: 123.47, leadA: 698.46, leadB: 987.77 }
+];
+
+function playBgmStep() {
+  if (!bgmEnabled || state.settings.sound !== 'on' || !game.running || game.paused) return;
+  const ctx = getAudio();
+  if (!ctx) return;
+  const step = BGM_PATTERN[bgmStep % BGM_PATTERN.length];
+  playTone(step.bass, 0.24, 'square', 0.048);
+  setTimeout(() => {
+    if (bgmEnabled && state.settings.sound === 'on' && game.running && !game.paused) {
+      playTone(step.leadA, 0.13, 'triangle', 0.042);
+    }
+  }, 35);
+  setTimeout(() => {
+    if (bgmEnabled && state.settings.sound === 'on' && game.running && !game.paused) {
+      playTone(step.leadB, 0.11, 'sine', 0.024);
+    }
+  }, 135);
+  setTimeout(() => {
+    if (bgmEnabled && state.settings.sound === 'on' && game.running && !game.paused) {
+      playTone(step.leadA, 0.09, 'triangle', 0.026);
+    }
+  }, 230);
+  bgmStep++;
+}
+
+function stopBgm() {
+  bgmEnabled = false;
+  if (bgmTimer) {
+    clearInterval(bgmTimer);
+    bgmTimer = null;
+  }
+}
+
+function startBgm() {
+  if (state.settings.sound !== 'on') return;
+  const ctx = getAudio();
+  if (!ctx) return;
+  bgmEnabled = true;
+  if (bgmTimer) return;
+  playBgmStep();
+  bgmTimer = setInterval(playBgmStep, 300);
+}
+
+function syncBgm() {
+  if (state.settings.sound !== 'on' || !game.running || game.paused) {
+    stopBgm();
+    return;
+  }
+  startBgm();
+}
 
 /* ================================================================
    EQUATION GENERATOR
@@ -1659,6 +1726,7 @@ function damageEarth(meteor) {
     showCinematicAlert('Critical Impact', 'Earth shield collapsing', true);
   }
   game.health = Math.max(0, game.health - dmg);
+  updateHUD();
   
   // big explosion at earth surface
   const colors = ['#D62828', '#FF4444', '#F4B942', '#FFFFFF'];
@@ -2460,6 +2528,7 @@ function nextLevel() {
 function endGame(success) {
   game.running = false;
   game.paused = true;
+  syncBgm();
   
   if (!success) sfx.fail();
   
@@ -2496,17 +2565,20 @@ let pendingNextAction = 'leaderboard';  // what to do after name entry: 'leaderb
 function pauseGame() {
   if (!game.running) return;
   game.paused = true;
+  syncBgm();
   document.getElementById('overlay-pause').classList.remove('hidden');
 }
 
 function resumeGame() {
   game.paused = false;
+  syncBgm();
   document.getElementById('overlay-pause').classList.add('hidden');
 }
 
 function quitToMenu() {
   game.running = false;
   game.paused = false;
+  syncBgm();
   document.querySelectorAll('.overlay').forEach(o => o.classList.add('hidden'));
   
   // if there's a pending high score, prompt for name
@@ -2529,6 +2601,7 @@ function startGame(mode) {
   requestAnimationFrame(() => {
     setupCanvas();
     resetGameState(state.settings.mode);
+    syncBgm();
     game.lastFrame = 0;
     requestAnimationFrame(loop);
   });
@@ -2626,6 +2699,7 @@ function bindSettingsOptions() {
       const setting = group.dataset.setting;
       state.settings[setting] = opt.dataset.value;
       saveState();
+      if (setting === 'sound') syncBgm();
       renderSettingsUI();
     });
   });
