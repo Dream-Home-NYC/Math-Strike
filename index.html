@@ -548,6 +548,11 @@
     box-shadow: 0 18px 42px rgba(120,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
   }
   
+  .cinematic-alert.boss {
+    border-color: rgba(210, 150, 255, 0.34);
+    box-shadow: 0 18px 44px rgba(82, 20, 110, 0.34), inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+  
   .cinematic-kicker {
     font-size: 10px;
     letter-spacing: 4px;
@@ -1460,7 +1465,7 @@ function setupLevel() {
   showCinematicAlert(game.mode === 'normal' ? `Level ${game.level}` : `Survival ${game.level}`, game.mode === 'normal' ? 'Orbital defense active' : 'Meteor pressure rising');
 }
 
-function showCinematicAlert(title, kicker = 'Incoming', danger = false) {
+function showCinematicAlert(title, kicker = 'Incoming', danger = false, tone = 'default') {
   const alertEl = document.getElementById('cinematic-alert');
   const titleEl = document.getElementById('cinematic-title');
   const kickerEl = document.getElementById('cinematic-kicker');
@@ -1474,6 +1479,9 @@ function showCinematicAlert(title, kicker = 'Incoming', danger = false) {
     alertEl.classList.add('danger');
     titleEl.classList.add('danger');
   }
+  if (tone === 'boss') {
+    alertEl.classList.add('boss');
+  }
   
   void alertEl.offsetWidth;
   alertEl.classList.add('show');
@@ -1483,6 +1491,16 @@ function showCinematicAlert(title, kicker = 'Incoming', danger = false) {
     alertEl.className = 'cinematic-alert';
     titleEl.className = 'cinematic-title';
   }, 1850);
+}
+
+function nextBossPhase(meteor) {
+  const eq = makeEquation(game.level + 1, state.settings.maxDigits);
+  meteor.shape = eq.shape;
+  meteor.answer = eq.answer;
+  meteor.text = `${eq.text} = ?`;
+  meteor.dying = false;
+  meteor.pulse += 1.2;
+  return meteor;
 }
 
 function spawnMeteor() {
@@ -1522,7 +1540,7 @@ function spawnMeteor() {
   game.meteorsSpawned++;
   if (isBoss) {
     game.bossSpawned = true;
-    showCinematicAlert('Boss Meteor', 'Final target locked');
+    showCinematicAlert('Boss Meteor', 'Final target locked', false, 'boss');
     triggerShake(220);
   }
 }
@@ -1869,7 +1887,7 @@ function update(dt) {
         // hit!
         if (ms.target.isBoss && ms.target.bossHits > 1) {
           ms.target.bossHits--;
-          ms.target.pulse += 1.4;
+          nextBossPhase(ms.target);
           game.hitFlashes.push({
             x: ms.target.x,
             y: ms.target.y,
@@ -1887,8 +1905,8 @@ function update(dt) {
             growth: 180,
             color: '244, 185, 66'
           });
-          showFloatMsg(`SHIELD ${ms.target.bossHits}`, ms.target.x, ms.target.y - ms.target.radius - 10, '#F4B942');
-          showCinematicAlert('Boss Shield Cracked', `${ms.target.bossHits} phase${ms.target.bossHits === 1 ? '' : 's'} remaining`);
+          showFloatMsg(`PHASE ${ms.target.bossHits}`, ms.target.x, ms.target.y - ms.target.radius - 10, '#F4B942');
+          showCinematicAlert(`Phase ${ms.target.bossMaxHits - ms.target.bossHits + 1}`, `${ms.target.bossHits} phase${ms.target.bossHits === 1 ? '' : 's'} remaining`, false, 'boss');
           triggerShake(110);
           game.missiles.splice(i, 1);
           continue;
@@ -2220,15 +2238,20 @@ function drawMeteor(ctx, m) {
   const enteringAlpha = Math.min(1, Math.max(0, (m.y + fadeDist) / fadeDist));
   ctx.globalAlpha = enteringAlpha;
   
+  const bossPhase = m.isBoss ? (m.bossHits / m.bossMaxHits) : 0;
+  const bossHue = m.isBoss ? Math.round(8 + (1 - bossPhase) * 250) : 0;
+  const bossGlowCore = m.isBoss ? `hsla(${bossHue}, 92%, 66%, 0.62)` : null;
+  const bossGlowMid = m.isBoss ? `hsla(${bossHue}, 98%, 72%, 0.2)` : null;
+  
   // glow
   const pulseFactor = 1 + Math.sin(m.pulse) * 0.08;
-  const glowR = m.radius * (m.isBoss ? 2.15 : 1.7) * pulseFactor;
+  const glowR = m.radius * (m.isBoss ? (2.0 + (1 - bossPhase) * 0.35) : 1.7) * pulseFactor;
   const glowGrad = ctx.createRadialGradient(0, 0, m.radius * 0.35, 0, 0, glowR);
   const glowColor = m.isBoss
-    ? 'rgba(157, 78, 221, 0.58)'
+    ? bossGlowCore
     : m.isFast ? 'rgba(244, 185, 66, 0.56)' : 'rgba(214, 40, 40, 0.46)';
   glowGrad.addColorStop(0, glowColor);
-  glowGrad.addColorStop(0.65, m.isBoss ? 'rgba(244,185,66,0.18)' : 'rgba(255,140,90,0.14)');
+  glowGrad.addColorStop(0.65, m.isBoss ? bossGlowMid : 'rgba(255,140,90,0.14)');
   glowGrad.addColorStop(1, 'rgba(214, 40, 40, 0)');
   ctx.fillStyle = glowGrad;
   ctx.beginPath();
@@ -2238,14 +2261,28 @@ function drawMeteor(ctx, m) {
   if (m.isBoss) {
     ctx.save();
     ctx.rotate(m.rotation * 0.5 + Math.sin(m.bossAura) * 0.15);
-    ctx.strokeStyle = 'rgba(244, 185, 66, 0.55)';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = `hsla(${bossHue}, 100%, 72%, 0.62)`;
+    ctx.lineWidth = 3 + (1 - bossPhase) * 1.4;
     ctx.beginPath();
     ctx.arc(0, 0, m.radius * 1.22, Math.PI * 0.1, Math.PI * 1.45);
     ctx.stroke();
     ctx.beginPath();
     ctx.arc(0, 0, m.radius * 1.38, Math.PI * 1.1, Math.PI * 2.15);
     ctx.stroke();
+    ctx.restore();
+    
+    const phaseAlpha = Math.max(0.2, m.bossHits / m.bossMaxHits);
+    ctx.save();
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = `hsla(${bossHue}, 100%, 72%, ${0.24 + phaseAlpha * 0.16})`;
+    for (let i = 0; i < m.bossHits; i++) {
+      const angle = -Math.PI / 2 + (i - (m.bossHits - 1) / 2) * 0.28;
+      const px = Math.cos(angle) * m.radius * 0.62;
+      const py = -m.radius * 1.34 + Math.sin(angle) * 6;
+      ctx.beginPath();
+      ctx.arc(px, py, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
   
@@ -2266,9 +2303,9 @@ function drawMeteor(ctx, m) {
   ctx.save();
   ctx.rotate(m.rotation);
   const shapeColor = getShapeColor(m.shape);
-  ctx.fillStyle = shapeColor;
-  ctx.strokeStyle = m.isBoss ? '#F4B942' : m.isFast ? '#F4B942' : 'rgba(255,255,255,0.7)';
-  ctx.lineWidth = m.isBoss ? 4 : m.isFast ? 3 : 2;
+  ctx.fillStyle = m.isBoss ? `hsla(${bossHue}, 85%, ${56 + (1 - bossPhase) * 10}%, 1)` : shapeColor;
+  ctx.strokeStyle = m.isBoss ? `hsla(${bossHue}, 100%, 78%, 1)` : m.isFast ? '#F4B942' : 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = m.isBoss ? 4 + (1 - bossPhase) * 1.2 : m.isFast ? 3 : 2;
   drawShapePath(ctx, m.shape, m.radius);
   ctx.fill();
   ctx.stroke();
